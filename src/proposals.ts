@@ -9,8 +9,10 @@ export interface ProposalInput {
   evidence: string[]
 }
 
+// SKILLSTATS_HOME overrides the state directory (hermetic tests, CI, custom setups).
 export function proposalsDir(): string {
-  return join(homedir(), '.skill-analytics', 'proposals')
+  const base = process.env.SKILLSTATS_HOME ?? join(homedir(), '.skill-analytics')
+  return join(base, 'proposals')
 }
 
 // Writes a human-reviewable markdown proposal and returns its path.

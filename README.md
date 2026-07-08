@@ -114,8 +114,9 @@ standing. Evidence or it didn't happen.
 ## Privacy
 
 Everything is local. skillstats reads your transcripts and writes a SQLite
-database under `~/.skill-analytics`. There is no network code, no telemetry, no
-account. Nothing leaves the machine — ever.
+database under `~/.skill-analytics` (override the state directory with
+`SKILLSTATS_HOME`). There is no network code, no telemetry, no account. Nothing
+leaves the machine — ever.
 
 ## Roadmap
 

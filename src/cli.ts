@@ -28,7 +28,8 @@ interface Options {
 }
 
 function defaultDb(): string {
-  return join(homedir(), '.skill-analytics', 'skillstats.db')
+  const base = process.env.SKILLSTATS_HOME ?? join(homedir(), '.skill-analytics')
+  return join(base, 'skillstats.db')
 }
 
 function version(): string {
