@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
@@ -17,6 +17,17 @@ import { runDashboard } from './dashboard.js'
 import { exportStream, importStream } from './transfer.js'
 import { addRemote, removeRemote, readRemotes, syncRemotes } from './remotes.js'
 import { runSetup } from './setup.js'
+import {
+  computeSweep,
+  keepAdd,
+  keepRemove,
+  planMoves,
+  performQuarantine,
+  readManifest,
+  restore,
+  type SweepReport,
+} from './sweep.js'
+import { computeReconcile, type ReconcileGroup } from './reconcile.js'
 
 interface Options {
   db: string
@@ -31,6 +42,11 @@ interface Options {
   harness: string
   json: boolean
   days: number
+  // Undefined when --days was not passed, so sweep can default to 45 while
+  // report/skill keep their own 30-day default.
+  daysRaw: string | undefined
+  yes: boolean
+  all: boolean
   grade?: string
   evidence?: string
   followed?: string
@@ -83,6 +99,21 @@ Commands:
   remote remove <name>
   remote list [--json]
   remote sync [name]       Pull + import remotes over ssh (no name = all)
+  sweep [--json] [--days N=45]
+                           Cross-machine dead-weight candidates: skills in
+                           inventory with zero events in the window on every
+                           machine, ranked by frontmatter context cost. Read-only.
+  sweep keep <name> | unkeep <name>
+                           Keep-list a skill so it never appears as a candidate.
+  sweep quarantine [--yes] Without --yes: print the move plan, move nothing.
+                           With --yes: move each candidate's dir under
+                           SKILLSTATS_HOME/quarantine (never deletes).
+  sweep list [--json]      Show the quarantine manifest.
+  sweep restore <name|--all>
+                           Move quarantined skills back to their original path.
+  reconcile [--json]       Read-only duplicate detection: same-name across
+                           roots, near-duplicate names, near-identical
+                           descriptions — with a keeper recommendation.
   doctor                   Diagnose setup (dirs, parse rate, hook, db, node:sqlite)
   mcp                      Run the stdio MCP server
   dashboard [--port N]     Serve a read-only HTML dashboard (default port 4173)
@@ -101,6 +132,12 @@ Global options:
   --version, -v            Show version
 `
 
+// Piping to `head` closes stdout early — exit clean instead of stack-tracing.
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') process.exit(0)
+  throw err
+})
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -113,6 +150,8 @@ async function main(): Promise<number> {
       harness: { type: 'string' },
       json: { type: 'boolean', default: false },
       days: { type: 'string' },
+      yes: { type: 'boolean', default: false },
+      all: { type: 'boolean', default: false },
       grade: { type: 'string' },
       evidence: { type: 'string' },
       followed: { type: 'string' },
@@ -143,13 +182,19 @@ async function main(): Promise<number> {
   const opts: Options = {
     db: values.db ?? defaultDb(),
     claudeDir: values['claude-dir'] ?? join(homedir(), '.claude'),
-    claudeDirExplicit: values['claude-dir'],
+    // Explicit flag wins; otherwise scan the real ~/.claude when it exists.
+    // undefined (no flag, no dir) = skip inventory rather than error.
+    claudeDirExplicit:
+      values['claude-dir'] ?? (existsSync(join(homedir(), '.claude')) ? join(homedir(), '.claude') : undefined),
     codexDir: values['codex-dir'] ?? join(homedir(), '.codex'),
     codexDirExplicit: values['codex-dir'],
     skillsRoots: values['skills-root'] ?? [],
     harness: values.harness ?? 'claude',
     json: values.json ?? false,
     days: parseDays(values.days),
+    daysRaw: values.days,
+    yes: values.yes ?? false,
+    all: values.all ?? false,
     grade: values.grade,
     evidence: values.evidence,
     followed: values.followed,
@@ -182,6 +227,10 @@ async function main(): Promise<number> {
       return cmdImport(opts, positionals[1])
     case 'remote':
       return cmdRemote(opts, positionals)
+    case 'sweep':
+      return cmdSweep(opts, positionals)
+    case 'reconcile':
+      return cmdReconcile(opts)
     case 'doctor':
       return cmdDoctor(opts)
     case 'mcp':
@@ -378,6 +427,144 @@ function cmdRemote(opts: Options, positionals: string[]): number {
       process.stderr.write('usage: skill-stats remote <add|remove|list|sync> ...\n')
       return 1
   }
+}
+
+function cmdSweep(opts: Options, positionals: string[]): number {
+  const sub = positionals[1]
+  switch (sub) {
+    case undefined:
+      return sweepShow(opts)
+    case 'keep':
+    case 'unkeep':
+      return sweepKeepList(sub, positionals[2])
+    case 'quarantine':
+      return sweepQuarantine(opts)
+    case 'list':
+      return sweepListManifest(opts)
+    case 'restore':
+      return sweepRestore(opts, positionals[2])
+    default:
+      process.stderr.write('usage: skill-stats sweep [keep|unkeep <name>|quarantine [--yes]|list|restore <name|--all>]\n')
+      return 1
+  }
+}
+
+function sweepDays(opts: Options): number {
+  return opts.daysRaw === undefined ? 45 : opts.days
+}
+
+function sweepShow(opts: Options): number {
+  const db = openDb(opts.db)
+  const report = computeSweep(db, inventoryOptions(opts), sweepDays(opts))
+  db.close()
+  if (opts.json) {
+    process.stdout.write(JSON.stringify(report) + '\n')
+    return 0
+  }
+  process.stdout.write(sweepHuman(report))
+  return 0
+}
+
+function sweepHuman(report: SweepReport): string {
+  const lines: string[] = []
+  lines.push(`skill-stats sweep · window ${report.days}d · ${report.candidates.length} candidate(s) · ~${report.estTokensPerTurn} tok/turn reclaimable`)
+  if (report.historyDays < 60) {
+    lines.push(`  caveat: only ${report.historyDays}d of history backs these dormancy calls — thin evidence; re-run after more usage accrues.`)
+  }
+  lines.push('')
+  lines.push(pad('SKILL', 28) + pad('SOURCE', 12) + pad('BYTES', 8) + 'LAST USED')
+  for (const c of report.candidates) {
+    lines.push(pad(c.name, 28) + pad(c.source, 12) + pad(String(c.descBytes), 8) + (c.lastUsed ?? '—'))
+  }
+  if (report.pluginBound.length) {
+    lines.push('')
+    lines.push(`plugin-bound (${report.pluginBound.length}) — disable the plugin instead, do not move files:`)
+    for (const c of report.pluginBound) lines.push(`  ${c.name}`)
+  }
+  return lines.join('\n') + '\n'
+}
+
+function sweepKeepList(sub: 'keep' | 'unkeep', name: string | undefined): number {
+  if (!name) {
+    process.stderr.write(`usage: skill-stats sweep ${sub} <name>\n`)
+    return 1
+  }
+  const changed = sub === 'keep' ? keepAdd(name) : keepRemove(name)
+  const verb = sub === 'keep' ? 'keep-listed' : 'removed from keep-list'
+  process.stdout.write(changed ? `${verb} ${name}\n` : `${name} already ${sub === 'keep' ? 'kept' : 'not kept'}\n`)
+  return 0
+}
+
+function sweepQuarantine(opts: Options): number {
+  const db = openDb(opts.db)
+  const report = computeSweep(db, inventoryOptions(opts), sweepDays(opts))
+  db.close()
+  const candidates = report.candidates
+  if (!opts.yes) {
+    process.stdout.write(`sweep quarantine plan — ${candidates.length} skill(s), nothing moved (pass --yes to execute):\n`)
+    for (const p of planMoves(candidates)) {
+      process.stdout.write(`  ${p.name}\n    from ${p.src}\n    to   ${p.dest}\n`)
+    }
+    return 0
+  }
+  const moved = performQuarantine(candidates)
+  process.stdout.write(`quarantined ${moved.length} skill(s): ${moved.join(', ') || '(none)'}\n`)
+  return 0
+}
+
+function sweepListManifest(opts: Options): number {
+  const entries = readManifest()
+  if (opts.json) {
+    process.stdout.write(JSON.stringify(entries) + '\n')
+    return 0
+  }
+  if (!entries.length) {
+    process.stdout.write('quarantine is empty\n')
+    return 0
+  }
+  for (const e of entries) process.stdout.write(`${e.name}\t${e.quarantinedAt}\t${e.originalPath}\n`)
+  return 0
+}
+
+function sweepRestore(opts: Options, name: string | undefined): number {
+  const target = opts.all ? '--all' : name
+  if (!target) {
+    process.stderr.write('usage: skill-stats sweep restore <name|--all>\n')
+    return 1
+  }
+  const res = restore(target)
+  if (res.missing.length) {
+    process.stdout.write(`no quarantined skill named ${res.missing.join(', ')}\n`)
+    return 1
+  }
+  process.stdout.write(`restored ${res.restored.length} skill(s): ${res.restored.join(', ') || '(none)'}\n`)
+  return 0
+}
+
+function cmdReconcile(opts: Options): number {
+  const db = openDb(opts.db)
+  const result = computeReconcile(db, inventoryOptions(opts))
+  db.close()
+  if (opts.json) {
+    process.stdout.write(JSON.stringify(result) + '\n')
+    return 0
+  }
+  if (!result.groups.length) {
+    process.stdout.write('reconcile · no duplicate or near-duplicate skills found\n')
+    return 0
+  }
+  process.stdout.write(`reconcile · ${result.groups.length} group(s)\n`)
+  for (const g of result.groups) process.stdout.write(reconcileGroupHuman(g))
+  return 0
+}
+
+function reconcileGroupHuman(g: ReconcileGroup): string {
+  const lines: string[] = ['', `[${g.kind}] ${g.members.map((m) => m.name).join(' · ')}`]
+  for (const m of g.members) {
+    lines.push(`  ${m.name} (${m.source}) — ${m.invocations} invoke(s), last ${m.lastUsed ?? '—'}, ${m.path}`)
+  }
+  lines.push(`  → ${g.recommendation}`)
+  return lines.join('\n') + '\n'
 }
 
 function cmdOutcome(opts: Options, skill: string | undefined): number {

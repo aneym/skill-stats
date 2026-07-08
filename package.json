@@ -1,6 +1,6 @@
 {
   "name": "skill-stats",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Local-first skill-usage analytics for coding agents — record every skill activation, grade whether it helped, and close the loop with human-gated improvement proposals.",
   "license": "MIT",
   "author": "Alex Neyman",

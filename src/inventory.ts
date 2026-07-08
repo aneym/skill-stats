@@ -24,9 +24,20 @@ export interface InventoryOptions {
 // First writer for a name wins, so an activated skill keeps its richest source.
 export function loadInventory(opts: InventoryOptions): Map<string, InventoryEntry> {
   const out = new Map<string, InventoryEntry>()
+  for (const e of scanEntries(opts)) {
+    if (!out.has(e.name)) out.set(e.name, e)
+  }
+  return out
+}
+
+// Every on-disk entry across every source, DUPLICATES PRESERVED. loadInventory
+// dedups by name (first writer wins); reconcile needs the collisions to detect
+// the same skill copied into multiple roots.
+export function scanEntries(opts: InventoryOptions): InventoryEntry[] {
+  const out: InventoryEntry[] = []
   const add = (name: string, file: string, source: InventorySource): void => {
-    if (!name || out.has(name)) return
-    out.set(name, { name, hash: hashFile(file), path: file, source })
+    if (!name) return
+    out.push({ name, hash: hashFile(file), path: file, source })
   }
 
   if (opts.claudeDir) {
@@ -55,6 +66,10 @@ export function loadInventory(opts: InventoryOptions): Map<string, InventoryEntr
   }
 
   return out
+}
+
+export function isPluginSource(source: InventorySource): boolean {
+  return source === 'plugin'
 }
 
 export function skillHash(claudeDir: string, name: string): string | null {
