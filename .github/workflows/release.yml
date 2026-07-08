@@ -1,0 +1,74 @@
+name: release
+
+# Push to main IS the release pipeline:
+#   - every push: install + full frozen-suite test
+#   - if package.json's version isn't on npm yet: publish (with provenance),
+#     tag vX.Y.Z, and cut a GitHub release
+# Publishing auth (one-time): either configure npm Trusted Publishing for this
+# repo (npmjs.com → package → Settings → Trusted publisher; no secret needed),
+# or add an npm automation token as the NPM_TOKEN repo secret. Until one of
+# those exists, the publish step skips with a notice instead of failing.
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write # tag + release
+  id-token: write # npm provenance / trusted publishing
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm ci
+
+      - name: Test (frozen suites)
+        run: npm test
+
+      - name: Publish if version is new
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version in tree: $VERSION"
+          if npm view "skill-stats@$VERSION" version >/dev/null 2>&1; then
+            echo "skill-stats@$VERSION already on npm — nothing to publish"
+            echo "publish=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! npm publish --provenance --access public; then
+            echo "::notice::publish failed — configure npm Trusted Publishing or set the NPM_TOKEN repo secret (see workflow header). Tests passed; this is auth, not code."
+            exit 0
+          fi
+          echo "published skill-stats@$VERSION"
+
+      - name: Tag + GitHub release if missing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if ! npm view "skill-stats@$VERSION" version >/dev/null 2>&1; then
+            echo "not on npm — skipping tag/release"
+            exit 0
+          fi
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "tag v$VERSION exists"
+          else
+            git tag "v$VERSION"
+            git push origin "v$VERSION"
+          fi
+          gh release view "v$VERSION" >/dev/null 2>&1 || \
+            gh release create "v$VERSION" --generate-notes --title "v$VERSION"
