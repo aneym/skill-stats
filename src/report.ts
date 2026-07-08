@@ -17,6 +17,12 @@ export interface SkillRow {
   errorsAfter: number
   dormant: boolean
   outcomes: Outcomes
+  // Activations per day over the window, oldest bucket first (sparkline data).
+  dailyCounts: number[]
+  // Invocations in the equal-length window immediately before this one (trend).
+  prevInvocations: number
+  // Windowed activation counts keyed by harness ("claude-code", "codex").
+  harnesses: Record<string, number>
 }
 
 export interface Report {
@@ -103,7 +109,8 @@ function computeRow(
   db: DatabaseSync,
   name: string,
   inInventory: boolean,
-  cutoffMs: number
+  cutoffMs: number,
+  days: number
 ): { row: SkillRow; events: EventRow[]; windowed: EventRow[] } {
   const events = eventsForSkill(db, name)
   const windowed = events.filter((e) => tsMs(e.ts) >= cutoffMs)
@@ -111,6 +118,23 @@ function computeRow(
   const tokensAfter = windowed.reduce((a, e) => a + (e.tokens_after ?? 0), 0)
   const errorsAfter = windowed.reduce((a, e) => a + (e.errors_after ?? 0), 0)
   const lastUsed = events.length ? events[0].ts : null
+
+  const prevCutoffMs = cutoffMs - days * DAY_MS
+  const dailyCounts = new Array<number>(days).fill(0)
+  const harnesses: Record<string, number> = {}
+  let prevInvocations = 0
+  for (const e of events) {
+    const ms = tsMs(e.ts)
+    if (ms >= cutoffMs) {
+      const idx = Math.min(days - 1, Math.floor((ms - cutoffMs) / DAY_MS))
+      dailyCounts[idx]++
+      const h = e.harness ?? 'claude-code'
+      harnesses[h] = (harnesses[h] ?? 0) + 1
+    } else if (ms >= prevCutoffMs) {
+      prevInvocations++
+    }
+  }
+
   const row: SkillRow = {
     name,
     invocations,
@@ -119,6 +143,9 @@ function computeRow(
     errorsAfter,
     dormant: invocations === 0 && inInventory,
     outcomes: outcomesForSkill(db, name),
+    dailyCounts,
+    prevInvocations,
+    harnesses,
   }
   return { row, events, windowed }
 }
@@ -139,7 +166,7 @@ export function computeReport(
   const inventory = loadInventory(claudeDir)
   const skills: SkillRow[] = []
   for (const name of skillUniverse(db, inventory.keys())) {
-    skills.push(computeRow(db, name, inventory.has(name), cutoffMs).row)
+    skills.push(computeRow(db, name, inventory.has(name), cutoffMs, days).row)
   }
   skills.sort((a, b) => b.invocations - a.invocations || a.name.localeCompare(b.name))
   return { generatedAt: new Date().toISOString(), days, skills }
@@ -153,7 +180,7 @@ export function computeSkillDetail(
 ): SkillDetail {
   const cutoffMs = Date.now() - days * DAY_MS
   const inventory = loadInventory(claudeDir)
-  const { row, events } = computeRow(db, name, inventory.has(name), cutoffMs)
+  const { row, events } = computeRow(db, name, inventory.has(name), cutoffMs, days)
 
   const versionMap = new Map<string | null, VersionRollup>()
   for (const e of events) {

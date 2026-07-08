@@ -147,7 +147,7 @@ async function main(): Promise<number> {
       await runMcp(opts.db, opts.claudeDir)
       return 0
     case 'dashboard':
-      runDashboard(opts.db, opts.claudeDir, opts.port)
+      runDashboard(opts.db, opts.claudeDir, opts.codexDir, opts.port)
       return 0
     default:
       process.stderr.write(`unknown command: ${command}\n\n${HELP}`)
