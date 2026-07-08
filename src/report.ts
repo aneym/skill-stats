@@ -34,6 +34,7 @@ export interface VersionRollup {
 
 export interface Activation {
   ts: string | null
+  harness: string | null
   trigger: string | null
   origin: string | null
   sessionId: string | null
@@ -50,6 +51,7 @@ export interface SkillDetail extends SkillRow {
 
 interface EventRow {
   ts: string | null
+  harness: string | null
   trigger: string | null
   origin: string | null
   session_id: string | null
@@ -75,7 +77,7 @@ function tsMs(ts: string | null): number {
 function eventsForSkill(db: DatabaseSync, name: string): EventRow[] {
   return all<EventRow>(
     db,
-    `SELECT e.ts, e.trigger, e.origin, e.session_id, e.project, e.skill_hash,
+    `SELECT e.ts, e.harness, e.trigger, e.origin, e.session_id, e.project, e.skill_hash,
             s.tokens_after, s.errors_after
        FROM events e
        LEFT JOIN signals s ON s.event_id = e.id
@@ -128,7 +130,11 @@ function skillUniverse(db: DatabaseSync, inventory: Iterable<string>): Set<strin
   return names
 }
 
-export function computeReport(db: DatabaseSync, claudeDir: string, days: number): Report {
+export function computeReport(
+  db: DatabaseSync,
+  claudeDir: string | undefined,
+  days: number
+): Report {
   const cutoffMs = Date.now() - days * DAY_MS
   const inventory = loadInventory(claudeDir)
   const skills: SkillRow[] = []
@@ -141,7 +147,7 @@ export function computeReport(db: DatabaseSync, claudeDir: string, days: number)
 
 export function computeSkillDetail(
   db: DatabaseSync,
-  claudeDir: string,
+  claudeDir: string | undefined,
   name: string,
   days: number
 ): SkillDetail {
@@ -161,6 +167,7 @@ export function computeSkillDetail(
 
   const recent: Activation[] = events.slice(0, 20).map((e) => ({
     ts: e.ts,
+    harness: e.harness,
     trigger: e.trigger,
     origin: e.origin,
     sessionId: e.session_id,

@@ -10,8 +10,9 @@ export interface InventoryEntry {
 
 // Best-effort read of the on-disk skill inventory. Never throws — a missing or
 // unreadable directory simply contributes no entries.
-export function loadInventory(claudeDir: string): Map<string, InventoryEntry> {
+export function loadInventory(claudeDir: string | undefined): Map<string, InventoryEntry> {
   const out = new Map<string, InventoryEntry>()
+  if (!claudeDir) return out
   for (const file of findSkillFiles(claudeDir)) {
     const name = basename(dirname(file))
     if (out.has(name)) continue

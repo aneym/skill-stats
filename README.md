@@ -55,6 +55,24 @@ The hook is designed to be invisible and unbreakable: on garbage input, a
 non-Skill tool, or any db error it exits 0 silently. **A broken analytics hook
 must never break your Claude session.**
 
+## Codex support
+
+skillstats also reads [Codex](https://github.com/openai/codex) sessions. Codex
+records no live hook yet, so it's **backfill-only** for now (Claude Code gets both
+live capture *and* backfill; Codex gets backfill):
+
+```bash
+npx skillstats backfill --harness codex        # reads ~/.codex/sessions rollouts
+npx skillstats backfill --harness codex --codex-dir /path/to/.codex
+npx skillstats report                          # codex + claude side by side
+```
+
+A Codex skill activates when the model reads its `SKILL.md` via a tool call
+(`exec_command` / `shell`), so skillstats scans each rollout's `function_call`
+entries for a path ending in `/SKILL.md` and records one activation per
+(session, skill) at the first read. Events are tagged `harness=codex`. The
+default `backfill` (or `--harness claude`) is unchanged.
+
 ## MCP server
 
 Expose the analytics to any agent as tools. Add to your `.mcp.json`:

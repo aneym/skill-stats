@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { openDb } from './db.js'
-import { backfill } from './backfill.js'
+import { backfill, backfillCodex } from './backfill.js'
 import { computeReport, computeSkillDetail, type SkillRow } from './report.js'
 import { runHook } from './hook.js'
 import { recordOutcome, type Grade } from './outcome.js'
@@ -17,6 +17,11 @@ import { runDashboard } from './dashboard.js'
 interface Options {
   db: string
   claudeDir: string
+  // Undefined when --claude-dir was not passed: report/skill then skip the
+  // on-disk inventory instead of scanning the real ~/.claude.
+  claudeDirExplicit: string | undefined
+  codexDir: string
+  harness: string
   json: boolean
   days: number
   grade?: string
@@ -51,7 +56,10 @@ const HELP = `skillstats — local-first skill-usage analytics for Claude Code
 Usage: skillstats <command> [options]
 
 Commands:
-  backfill                 Parse ~/.claude transcripts into the local db (idempotent)
+  backfill [--harness claude|codex] [--codex-dir <dir>]
+                           Parse transcripts into the local db (idempotent).
+                           Default harness=claude (~/.claude); codex reads
+                           <codex-dir>/sessions rollouts (default ~/.codex)
   report [--json] [--days N]   Ranked usage report (default window 30 days)
   skill <name> [--json]    Drill-down for one skill (per-version rollup + recent activity)
   hook                     Ingest a PostToolUse payload from stdin (used by the installed hook)
@@ -76,6 +84,8 @@ async function main(): Promise<number> {
     options: {
       db: { type: 'string' },
       'claude-dir': { type: 'string' },
+      'codex-dir': { type: 'string' },
+      harness: { type: 'string' },
       json: { type: 'boolean', default: false },
       days: { type: 'string' },
       grade: { type: 'string' },
@@ -102,6 +112,9 @@ async function main(): Promise<number> {
   const opts: Options = {
     db: values.db ?? defaultDb(),
     claudeDir: values['claude-dir'] ?? join(homedir(), '.claude'),
+    claudeDirExplicit: values['claude-dir'],
+    codexDir: values['codex-dir'] ?? join(homedir(), '.codex'),
+    harness: values.harness ?? 'claude',
     json: values.json ?? false,
     days: parseDays(values.days),
     grade: values.grade,
@@ -143,8 +156,12 @@ async function main(): Promise<number> {
 }
 
 function cmdBackfill(opts: Options): number {
+  if (opts.harness !== 'claude' && opts.harness !== 'codex') {
+    process.stderr.write('--harness must be one of: claude, codex\n')
+    return 1
+  }
   const db = openDb(opts.db)
-  const s = backfill(db, opts.claudeDir)
+  const s = opts.harness === 'codex' ? backfillCodex(db, opts.codexDir) : backfill(db, opts.claudeDir)
   db.close()
   process.stdout.write(
     `scanned ${s.scanned} file(s) · added ${s.added} · skipped ${s.skipped} · corrupt ${s.corrupt} line(s)\n`
@@ -154,7 +171,7 @@ function cmdBackfill(opts: Options): number {
 
 function cmdReport(opts: Options): number {
   const db = openDb(opts.db)
-  const report = computeReport(db, opts.claudeDir, opts.days)
+  const report = computeReport(db, opts.claudeDirExplicit, opts.days)
   db.close()
   if (opts.json) {
     process.stdout.write(JSON.stringify(report) + '\n')
@@ -186,7 +203,7 @@ function cmdSkill(opts: Options, name: string | undefined): number {
     return 1
   }
   const db = openDb(opts.db)
-  const detail = computeSkillDetail(db, opts.claudeDir, name, opts.days)
+  const detail = computeSkillDetail(db, opts.claudeDirExplicit, name, opts.days)
   db.close()
   if (opts.json) {
     process.stdout.write(JSON.stringify(detail) + '\n')
