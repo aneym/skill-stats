@@ -1,8 +1,19 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 const MATCHER = 'Skill'
-const COMMAND = 'skillstats hook'
+const LEGACY_COMMAND = 'skillstats hook'
+
+// Pin absolute node + CLI paths: hooks run under Claude Code's shell PATH,
+// where a repo-checkout (or nvm/volta) skillstats may not resolve.
+function hookCommand(): string {
+  const cli = process.argv[1] ? resolve(process.argv[1]) : null
+  return cli ? `"${process.execPath}" "${cli}" hook` : LEGACY_COMMAND
+}
+
+function isOurCommand(command: string): boolean {
+  return command === LEGACY_COMMAND || (command.includes('skillstats') && command.trimEnd().endsWith(' hook'))
+}
 
 interface HookCommand {
   type: string
@@ -38,12 +49,13 @@ export function installHook(claudeDir: string): InstallResult {
   }
   entry.hooks = entry.hooks ?? []
 
-  if (entry.hooks.some((h) => h.command === COMMAND)) {
+  const command = hookCommand()
+  if (entry.hooks.some((h) => isOurCommand(h.command))) {
     return { changed: false, message: `Hook already installed in ${path}` }
   }
-  entry.hooks.push({ type: 'command', command: COMMAND })
+  entry.hooks.push({ type: 'command', command })
   writeSettings(path, settings)
-  return { changed: true, message: `Installed PostToolUse "${MATCHER}" hook → "${COMMAND}" in ${path}` }
+  return { changed: true, message: `Installed PostToolUse "${MATCHER}" hook → "${command}" in ${path}` }
 }
 
 export function uninstallHook(claudeDir: string): InstallResult {
@@ -58,7 +70,7 @@ export function uninstallHook(claudeDir: string): InstallResult {
   for (const m of postToolUse) {
     if (!m.hooks) continue
     const before = m.hooks.length
-    m.hooks = m.hooks.filter((h) => h.command !== COMMAND)
+    m.hooks = m.hooks.filter((h) => !isOurCommand(h.command))
     if (m.hooks.length !== before) changed = true
   }
   const pruned = postToolUse.filter((m) => (m.hooks?.length ?? 0) > 0)
@@ -74,7 +86,7 @@ export function isHookInstalled(claudeDir: string): boolean {
   const hooks = asRecord(settings.hooks)
   const postToolUse = asMatcherArray(hooks?.PostToolUse)
   if (!postToolUse) return false
-  return postToolUse.some((m) => m.hooks?.some((h) => h.command === COMMAND))
+  return postToolUse.some((m) => m.hooks?.some((h) => isOurCommand(h.command)))
 }
 
 function ensureMatchers(settings: Settings, event: string): HookMatcher[] {
