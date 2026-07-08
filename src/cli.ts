@@ -2,7 +2,7 @@
 import { parseArgs } from 'node:util'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { openDb } from './db.js'
 import { backfill, backfillCodex } from './backfill.js'
@@ -16,6 +16,7 @@ import { runMcp } from './mcp.js'
 import { runDashboard } from './dashboard.js'
 import { exportStream, importStream } from './transfer.js'
 import { addRemote, removeRemote, readRemotes, syncRemotes } from './remotes.js'
+import { runSetup } from './setup.js'
 
 interface Options {
   db: string
@@ -85,6 +86,12 @@ Commands:
   doctor                   Diagnose setup (dirs, parse rate, hook, db, node:sqlite)
   mcp                      Run the stdio MCP server
   dashboard [--port N]     Serve a read-only HTML dashboard (default port 4173)
+  setup [--dry-run] [--no-mcp] [--no-dashboard] [--no-hook] [--port N]
+                           One command to stand up the whole system: env check,
+                           backfill, hook install, MCP registration (Claude +
+                           Codex), and a persistent launchd dashboard. Each step
+                           reports ✓/·/! and never aborts the rest. --dry-run
+                           prints the resolved plan and writes nothing.
 
 Global options:
   --db <path>              Database path (default ~/.skill-analytics/skillstats.db)
@@ -114,6 +121,10 @@ async function main(): Promise<number> {
       host: { type: 'string' },
       path: { type: 'string' },
       port: { type: 'string' },
+      'dry-run': { type: 'boolean', default: false },
+      'no-mcp': { type: 'boolean', default: false },
+      'no-dashboard': { type: 'boolean', default: false },
+      'no-hook': { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
     },
@@ -179,6 +190,18 @@ async function main(): Promise<number> {
     case 'dashboard':
       runDashboard(opts.db, opts.claudeDir, opts.codexDir, opts.port)
       return 0
+    case 'setup':
+      return runSetup({
+        db: opts.db,
+        claudeDir: opts.claudeDir,
+        codexDir: opts.codexDir,
+        port: opts.port,
+        dryRun: values['dry-run'] ?? false,
+        noMcp: values['no-mcp'] ?? false,
+        noDashboard: values['no-dashboard'] ?? false,
+        noHook: values['no-hook'] ?? false,
+        cliPath: process.argv[1] ? resolve(process.argv[1]) : join(dirname(fileURLToPath(import.meta.url)), 'cli.js'),
+      })
     default:
       process.stderr.write(`unknown command: ${command}\n\n${HELP}`)
       return 1
