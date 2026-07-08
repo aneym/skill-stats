@@ -7,12 +7,15 @@ import { homedir } from 'node:os'
 import { openDb } from './db.js'
 import { backfill, backfillCodex } from './backfill.js'
 import { computeReport, computeSkillDetail, type SkillRow } from './report.js'
+import type { InventoryOptions } from './inventory.js'
 import { runHook } from './hook.js'
 import { recordOutcome, type Grade } from './outcome.js'
 import { installHook, uninstallHook } from './settings.js'
 import { doctor } from './doctor.js'
 import { runMcp } from './mcp.js'
 import { runDashboard } from './dashboard.js'
+import { exportStream, importStream } from './transfer.js'
+import { addRemote, removeRemote, readRemotes, syncRemotes } from './remotes.js'
 
 interface Options {
   db: string
@@ -21,6 +24,9 @@ interface Options {
   // on-disk inventory instead of scanning the real ~/.claude.
   claudeDirExplicit: string | undefined
   codexDir: string
+  // Same explicit-only rule for codex inventory: only scanned when passed.
+  codexDirExplicit: string | undefined
+  skillsRoots: string[]
   harness: string
   json: boolean
   days: number
@@ -29,6 +35,8 @@ interface Options {
   followed?: string
   ignored?: string
   session?: string
+  host?: string
+  path?: string
   port: number
 }
 
@@ -51,21 +59,29 @@ function version(): string {
   return '0.1.0'
 }
 
-const HELP = `skillstats — local-first skill-usage analytics for Claude Code
+const HELP = `skill-stats — local-first skill-usage analytics for coding agents
 
-Usage: skillstats <command> [options]
+Usage: skill-stats <command> [options]
 
 Commands:
   backfill [--harness claude|codex] [--codex-dir <dir>]
                            Parse transcripts into the local db (idempotent).
                            Default harness=claude (~/.claude); codex reads
                            <codex-dir>/sessions rollouts (default ~/.codex)
-  report [--json] [--days N]   Ranked usage report (default window 30 days)
-  skill <name> [--json]    Drill-down for one skill (per-version rollup + recent activity)
+  report [--json] [--days N] [--skills-root <dir>]...
+                           Ranked usage report (default window 30 days)
+  skill <name> [--json] [--skills-root <dir>]...
+                           Drill-down for one skill (per-version rollup + recent activity)
   hook                     Ingest a PostToolUse payload from stdin (used by the installed hook)
   install | uninstall      Add/remove the PostToolUse Skill hook in settings.json
   outcome <skill> --grade worked|partial|failed [--evidence "..."]
                            Record whether a skill helped (evidence >=40 chars = trusted)
+  export [--db <path>]     Dump events + outcomes as JSONL on stdout
+  import <file> [--db]     Ingest a JSONL export (idempotent, machine-preserving)
+  remote add <name> --host <ssh-host> [--path <repo-path>]
+  remote remove <name>
+  remote list [--json]
+  remote sync [name]       Pull + import remotes over ssh (no name = all)
   doctor                   Diagnose setup (dirs, parse rate, hook, db, node:sqlite)
   mcp                      Run the stdio MCP server
   dashboard [--port N]     Serve a read-only HTML dashboard (default port 4173)
@@ -73,6 +89,7 @@ Commands:
 Global options:
   --db <path>              Database path (default ~/.skill-analytics/skillstats.db)
   --claude-dir <dir>       Claude config dir (default ~/.claude)
+  --skills-root <dir>      Extra skills root to inventory (repeatable)
   --help, -h               Show this help
   --version, -v            Show version
 `
@@ -85,6 +102,7 @@ async function main(): Promise<number> {
       db: { type: 'string' },
       'claude-dir': { type: 'string' },
       'codex-dir': { type: 'string' },
+      'skills-root': { type: 'string', multiple: true },
       harness: { type: 'string' },
       json: { type: 'boolean', default: false },
       days: { type: 'string' },
@@ -93,6 +111,8 @@ async function main(): Promise<number> {
       followed: { type: 'string' },
       ignored: { type: 'string' },
       session: { type: 'string' },
+      host: { type: 'string' },
+      path: { type: 'string' },
       port: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
       version: { type: 'boolean', short: 'v', default: false },
@@ -114,6 +134,8 @@ async function main(): Promise<number> {
     claudeDir: values['claude-dir'] ?? join(homedir(), '.claude'),
     claudeDirExplicit: values['claude-dir'],
     codexDir: values['codex-dir'] ?? join(homedir(), '.codex'),
+    codexDirExplicit: values['codex-dir'],
+    skillsRoots: values['skills-root'] ?? [],
     harness: values.harness ?? 'claude',
     json: values.json ?? false,
     days: parseDays(values.days),
@@ -122,6 +144,8 @@ async function main(): Promise<number> {
     followed: values.followed,
     ignored: values.ignored,
     session: values.session,
+    host: values.host,
+    path: values.path,
     port: parsePort(values.port),
   }
 
@@ -141,6 +165,12 @@ async function main(): Promise<number> {
       return cmdInstall(opts, true)
     case 'outcome':
       return cmdOutcome(opts, positionals[1])
+    case 'export':
+      return cmdExport(opts)
+    case 'import':
+      return cmdImport(opts, positionals[1])
+    case 'remote':
+      return cmdRemote(opts, positionals)
     case 'doctor':
       return cmdDoctor(opts)
     case 'mcp':
@@ -169,15 +199,23 @@ function cmdBackfill(opts: Options): number {
   return 0
 }
 
+function inventoryOptions(opts: Options): InventoryOptions {
+  return {
+    claudeDir: opts.claudeDirExplicit,
+    skillsRoots: opts.skillsRoots,
+    codexDir: opts.codexDirExplicit,
+  }
+}
+
 function cmdReport(opts: Options): number {
   const db = openDb(opts.db)
-  const report = computeReport(db, opts.claudeDirExplicit, opts.days)
+  const report = computeReport(db, inventoryOptions(opts), opts.days)
   db.close()
   if (opts.json) {
     process.stdout.write(JSON.stringify(report) + '\n')
     return 0
   }
-  process.stdout.write(`skillstats report · window ${report.days}d · ${report.skills.length} skills\n\n`)
+  process.stdout.write(`skill-stats report · window ${report.days}d · ${report.skills.length} skills\n\n`)
   process.stdout.write(pad('SKILL', 24) + pad('INVOKES', 9) + pad('TOKENS', 10) + pad('ERRORS', 8) + pad('OUTCOMES', 16) + 'LAST USED\n')
   for (const s of report.skills) process.stdout.write(reportLine(s))
   return 0
@@ -199,11 +237,11 @@ function reportLine(s: SkillRow): string {
 
 function cmdSkill(opts: Options, name: string | undefined): number {
   if (!name) {
-    process.stderr.write('usage: skillstats skill <name>\n')
+    process.stderr.write('usage: skill-stats skill <name>\n')
     return 1
   }
   const db = openDb(opts.db)
-  const detail = computeSkillDetail(db, opts.claudeDirExplicit, name, opts.days)
+  const detail = computeSkillDetail(db, inventoryOptions(opts), name, opts.days)
   db.close()
   if (opts.json) {
     process.stdout.write(JSON.stringify(detail) + '\n')
@@ -233,9 +271,95 @@ function cmdInstall(opts: Options, uninstall: boolean): number {
   return 0
 }
 
+function cmdExport(opts: Options): number {
+  const db = openDb(opts.db)
+  process.stdout.write(exportStream(db))
+  db.close()
+  return 0
+}
+
+function cmdImport(opts: Options, file: string | undefined): number {
+  if (!file) {
+    process.stderr.write('usage: skill-stats import <file>\n')
+    return 1
+  }
+  let text: string
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch (err) {
+    process.stderr.write(`cannot read ${file}: ${err instanceof Error ? err.message : String(err)}\n`)
+    return 1
+  }
+  const db = openDb(opts.db)
+  const stats = importStream(db, text)
+  db.close()
+  process.stdout.write(`imported ${stats.added} · skipped ${stats.skipped}\n`)
+  return 0
+}
+
+function cmdRemote(opts: Options, positionals: string[]): number {
+  const sub = positionals[1]
+  switch (sub) {
+    case 'add': {
+      const name = positionals[2]
+      if (!name || !opts.host) {
+        process.stderr.write('usage: skill-stats remote add <name> --host <ssh-host> [--path <repo-path>]\n')
+        return 1
+      }
+      const remote = addRemote(name, opts.host, opts.path)
+      process.stdout.write(`added remote ${remote.name} → ${remote.host}:${remote.path}\n`)
+      return 0
+    }
+    case 'remove': {
+      const name = positionals[2]
+      if (!name) {
+        process.stderr.write('usage: skill-stats remote remove <name>\n')
+        return 1
+      }
+      process.stdout.write(removeRemote(name) ? `removed remote ${name}\n` : `no remote named ${name}\n`)
+      return 0
+    }
+    case 'list': {
+      const remotes = readRemotes()
+      if (opts.json) {
+        process.stdout.write(JSON.stringify(remotes) + '\n')
+        return 0
+      }
+      if (!remotes.length) {
+        process.stdout.write('no remotes configured\n')
+        return 0
+      }
+      for (const r of remotes) {
+        process.stdout.write(`${r.name}\t${r.host}\t${r.path}\t${r.lastSync ?? 'never'}\n`)
+      }
+      return 0
+    }
+    case 'sync': {
+      const db = openDb(opts.db)
+      const results = syncRemotes(db, positionals[2])
+      db.close()
+      if (!results.length) {
+        process.stdout.write('no remotes to sync\n')
+        return 0
+      }
+      for (const r of results) {
+        process.stdout.write(
+          r.error
+            ? `${r.name}: error — ${r.error}\n`
+            : `${r.name}: added ${r.added} · skipped ${r.skipped}\n`
+        )
+      }
+      return 0
+    }
+    default:
+      process.stderr.write('usage: skill-stats remote <add|remove|list|sync> ...\n')
+      return 1
+  }
+}
+
 function cmdOutcome(opts: Options, skill: string | undefined): number {
   if (!skill) {
-    process.stderr.write('usage: skillstats outcome <skill> --grade worked|partial|failed\n')
+    process.stderr.write('usage: skill-stats outcome <skill> --grade worked|partial|failed\n')
     return 1
   }
   if (!isGrade(opts.grade)) {

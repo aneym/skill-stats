@@ -8,6 +8,7 @@ import { openDb, all } from './db.js'
 import { backfill, backfillCodex } from './backfill.js'
 import { computeReport, computeSkillDetail, type Report, type SkillDetail } from './report.js'
 import { renderPage } from './dashboard-page.js'
+import { syncRemotes } from './remotes.js'
 
 export interface OutcomeRecord {
   skill: string
@@ -77,8 +78,14 @@ function outcomesForSkill(db: DatabaseSync, name: string): OutcomeRecord[] {
   ).map(toRecord)
 }
 
-function buildData(db: DatabaseSync, dbPath: string, claudeDir: string, days: number): DashboardData {
-  const report = computeReport(db, claudeDir, days)
+function buildData(
+  db: DatabaseSync,
+  dbPath: string,
+  claudeDir: string,
+  codexDir: string,
+  days: number
+): DashboardData {
+  const report = computeReport(db, { claudeDir, codexDir }, days)
   return {
     report,
     recentOutcomes: recentOutcomes(db),
@@ -110,6 +117,11 @@ function refresh(db: DatabaseSync, claudeDir: string, codexDir: string): void {
   } catch {
     // codex is optional; ignore adapter failures
   }
+  try {
+    syncRemotes(db)
+  } catch {
+    // remote sync is best-effort; a broken remote never fails the refresh
+  }
 }
 
 function handle(
@@ -124,14 +136,14 @@ function handle(
   const path = url.pathname
 
   if (req.method === 'GET' && path === '/') {
-    const html = renderPage(buildData(db, dbPath, claudeDir, 30))
+    const html = renderPage(buildData(db, dbPath, claudeDir, codexDir, 30))
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(html)
     return
   }
 
   if (req.method === 'GET' && path === '/api/report') {
-    sendJson(res, 200, buildData(db, dbPath, claudeDir, parseDays(url)))
+    sendJson(res, 200, buildData(db, dbPath, claudeDir, codexDir, parseDays(url)))
     return
   }
 
@@ -141,7 +153,7 @@ function handle(
       sendJson(res, 400, { error: 'skill name required' })
       return
     }
-    const detail = computeSkillDetail(db, claudeDir, name, parseDays(url))
+    const detail = computeSkillDetail(db, { claudeDir, codexDir }, name, parseDays(url))
     const drilldown: SkillDrilldown = { detail, outcomes: outcomesForSkill(db, name) }
     sendJson(res, 200, drilldown)
     return
@@ -149,7 +161,7 @@ function handle(
 
   if (req.method === 'POST' && path === '/api/refresh') {
     refresh(db, claudeDir, codexDir)
-    sendJson(res, 200, buildData(db, dbPath, claudeDir, parseDays(url)))
+    sendJson(res, 200, buildData(db, dbPath, claudeDir, codexDir, parseDays(url)))
     return
   }
 
@@ -171,6 +183,6 @@ export function runDashboard(
     }
   })
   server.listen(port, () => {
-    process.stdout.write(`skillstats dashboard on http://localhost:${port}\n`)
+    process.stdout.write(`skill-stats dashboard on http://localhost:${port}\n`)
   })
 }

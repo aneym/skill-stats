@@ -34,7 +34,7 @@ export function doctor(dbPath: string, claudeDir: string): DoctorResult {
     status: isHookInstalled(claudeDir) ? 'ok' : 'warn',
     detail: isHookInstalled(claudeDir)
       ? 'PostToolUse Skill hook present'
-      : 'run `skillstats install` for live capture',
+      : 'run `skill-stats install` for live capture',
   })
   checks.push(dbWritableCheck(dbPath))
 
@@ -97,7 +97,7 @@ function dbWritableCheck(dbPath: string): Check {
 
 function safeInventoryCount(claudeDir: string): number {
   try {
-    return loadInventory(claudeDir).size
+    return loadInventory({ claudeDir }).size
   } catch {
     return 0
   }

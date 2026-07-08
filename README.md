@@ -1,4 +1,6 @@
-# skillstats
+# skill-stats
+
+[github.com/aneym/skill-stats](https://github.com/aneym/skill-stats)
 
 **Skills are the unit of agent capability — and nobody can see them.**
 
@@ -8,7 +10,7 @@ installed it disappears into the run. Which ones actually fire? Which sit on
 disk for months, never triggering? When a skill *does* activate, does the work
 that follows get better or worse? Today the honest answer is a shrug.
 
-skillstats closes that loop. It:
+skill-stats closes that loop. It:
 
 1. **Records every activation** — live via a Claude Code hook, and retroactively
    by backfilling your existing transcripts.
@@ -27,8 +29,8 @@ your machine.
 ## Quickstart
 
 ```bash
-npx skillstats backfill      # parse ~/.claude transcripts into the local db
-npx skillstats report        # ranked table: what's used, what's dormant
+npx skill-stats backfill      # parse ~/.claude transcripts into the local db
+npx skill-stats report        # ranked table: what's used, what's dormant
 ```
 
 `report --json` emits the same data as machine-readable JSON;
@@ -37,7 +39,7 @@ npx skillstats report        # ranked table: what's used, what's dormant
 Drill into one skill:
 
 ```bash
-npx skillstats skill agent-browser
+npx skill-stats skill agent-browser
 ```
 
 ## Live capture (hook install)
@@ -47,8 +49,8 @@ Backfill is a snapshot; the hook keeps the picture current. It registers a
 db as it happens:
 
 ```bash
-npx skillstats install       # adds the hook to ~/.claude/settings.json
-npx skillstats uninstall     # removes it, preserving all your other settings
+npx skill-stats install       # adds the hook to ~/.claude/settings.json
+npx skill-stats uninstall     # removes it, preserving all your other settings
 ```
 
 The hook is designed to be invisible and unbreakable: on garbage input, a
@@ -57,18 +59,18 @@ must never break your Claude session.**
 
 ## Codex support
 
-skillstats also reads [Codex](https://github.com/openai/codex) sessions. Codex
+skill-stats also reads [Codex](https://github.com/openai/codex) sessions. Codex
 records no live hook yet, so it's **backfill-only** for now (Claude Code gets both
 live capture *and* backfill; Codex gets backfill):
 
 ```bash
-npx skillstats backfill --harness codex        # reads ~/.codex/sessions rollouts
-npx skillstats backfill --harness codex --codex-dir /path/to/.codex
-npx skillstats report                          # codex + claude side by side
+npx skill-stats backfill --harness codex        # reads ~/.codex/sessions rollouts
+npx skill-stats backfill --harness codex --codex-dir /path/to/.codex
+npx skill-stats report                          # codex + claude side by side
 ```
 
 A Codex skill activates when the model reads its `SKILL.md` via a tool call
-(`exec_command` / `shell`), so skillstats scans each rollout's `function_call`
+(`exec_command` / `shell`), so skill-stats scans each rollout's `function_call`
 entries for a path ending in `/SKILL.md` and records one activation per
 (session, skill) at the first read. Events are tagged `harness=codex`. The
 default `backfill` (or `--harness claude`) is unchanged.
@@ -80,9 +82,9 @@ Expose the analytics to any agent as tools. Add to your `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "skillstats": {
+    "skill-stats": {
       "command": "npx",
-      "args": ["skillstats", "mcp"]
+      "args": ["skill-stats", "mcp"]
     }
   }
 }
@@ -96,7 +98,7 @@ touches a `SKILL.md`).
 ## Dashboard
 
 ```bash
-npx skillstats dashboard     # http://localhost:4173
+npx skill-stats dashboard     # http://localhost:4173
 ```
 
 A single self-contained HTML page (zero external assets): the ranked skills
@@ -131,7 +133,7 @@ standing. Evidence or it didn't happen.
 
 ## Privacy
 
-Everything is local. skillstats reads your transcripts and writes a SQLite
+Everything is local. skill-stats reads your transcripts and writes a SQLite
 database under `~/.skill-analytics` (override the state directory with
 `SKILLSTATS_HOME`). There is no network code, no telemetry, no account. Nothing
 leaves the machine — ever.

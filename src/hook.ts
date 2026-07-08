@@ -1,6 +1,6 @@
 import { openDb } from './db.js'
 import { skillHash } from './inventory.js'
-import { dedupKey } from './backfill.js'
+import { currentMachine, makeInserter } from './ingest.js'
 
 // A PostToolUse hook must NEVER break the user's Claude session: every failure
 // path — garbage stdin, non-Skill tools, db errors — exits 0 and stays silent.
@@ -19,11 +19,18 @@ export async function runHook(dbPath: string, claudeDir: string): Promise<void> 
     const hash = safeHash(claudeDir, skill)
 
     const db = openDb(dbPath)
-    db.prepare(
-      `INSERT OR IGNORE INTO events
-         (harness, skill, source, trigger, session_id, project, ts, skill_hash, origin, dedup_key)
-       VALUES ('claude-code', ?, 'hook', 'hook', ?, NULL, ?, ?, 'hook', ?)`
-    ).run(skill, sessionId, ts, hash, dedupKey(sessionId, ts, skill))
+    makeInserter(db)({
+      harness: 'claude-code',
+      skill,
+      source: 'hook',
+      trigger: 'hook',
+      sessionId,
+      project: null,
+      ts,
+      skillHash: hash,
+      origin: 'hook',
+      machine: currentMachine(),
+    })
     db.close()
   } catch {
     // swallow — a broken hook must not block the session

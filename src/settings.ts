@@ -11,8 +11,14 @@ function hookCommand(): string {
   return cli ? `"${process.execPath}" "${cli}" hook` : LEGACY_COMMAND
 }
 
+// Match both the historical `skillstats` name and the current `skill-stats` so
+// an old install still uninstalls cleanly after the rename.
 function isOurCommand(command: string): boolean {
-  return command === LEGACY_COMMAND || (command.includes('skillstats') && command.trimEnd().endsWith(' hook'))
+  const endsWithHook = command.trimEnd().endsWith(' hook')
+  return (
+    command === LEGACY_COMMAND ||
+    ((command.includes('skillstats') || command.includes('skill-stats')) && endsWithHook)
+  )
 }
 
 interface HookCommand {

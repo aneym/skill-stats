@@ -1,12 +1,12 @@
 {
-  "name": "skillstats",
-  "version": "0.1.0",
-  "description": "Local-first skill-usage analytics for Claude Code — record every skill activation, grade whether it helped, and close the loop with human-gated improvement proposals.",
+  "name": "skill-stats",
+  "version": "0.2.0",
+  "description": "Local-first skill-usage analytics for coding agents — record every skill activation, grade whether it helped, and close the loop with human-gated improvement proposals.",
   "license": "MIT",
   "author": "Alex Neyman",
   "type": "module",
   "bin": {
-    "skillstats": "dist/cli.js"
+    "skill-stats": "dist/cli.js"
   },
   "files": [
     "dist",

@@ -152,7 +152,7 @@ const JS = `
     var m=S.data.meta;
     var seg=[7,30,90].map(function(d){return '<button data-days="'+d+'" class="'+(S.days===d?'active':'')+'">'+d+'d</button>';}).join('');
     el('topbar').innerHTML=
-      '<div><div class="wordmark">skillstats</div><div class="sub">'+esc(m.host)+' \\u00B7 '+esc(m.dbPath)+'</div></div>'+
+      '<div><div class="wordmark">skill-stats</div><div class="sub">'+esc(m.host)+' \\u00B7 '+esc(m.dbPath)+'</div></div>'+
       '<div class="controls"><div class="seg" id="seg">'+seg+'</div>'+
       '<button class="btn" id="refresh">Refresh</button><span class="upd" id="upd"></span></div>';
     updAgo();
@@ -284,7 +284,7 @@ const JS = `
     el('outcomes').innerHTML=head+'<div class="olist">'+rows+'</div>';
   }
 
-  function renderFooter(){el('footer').innerHTML='<span>100% local \\u2014 nothing leaves this machine</span><span class="v">skillstats v'+esc(S.data.meta.version)+'</span>';}
+  function renderFooter(){el('footer').innerHTML='<span>100% local \\u2014 nothing leaves this machine</span><span class="v">skill-stats v'+esc(S.data.meta.version)+'</span>';}
 
   function setSort(k){if(S.sortCol===k)S.sortDir*=-1;else{S.sortCol=k;S.sortDir=(k==='name'?1:-1);}renderFiring();}
   function setDays(d){if(S.days===d)return;S.days=d;S.details={};S.open=null;fetchReport();}
@@ -324,7 +324,7 @@ export function renderPage(data: DashboardData): string {
     '<head>\n' +
     '<meta charset="utf-8" />\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1" />\n' +
-    '<title>skillstats</title>\n' +
+    '<title>skill-stats</title>\n' +
     '<style>' +
     CSS +
     '</style>\n' +

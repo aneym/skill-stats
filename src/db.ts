@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { hostname } from 'node:os'
 
 export const SCHEMA_VERSION = '1'
 
@@ -42,6 +43,7 @@ function migrate(db: DatabaseSync): void {
       ts         TEXT,
       skill_hash TEXT,
       origin     TEXT NOT NULL,
+      machine    TEXT,
       dedup_key  TEXT UNIQUE
     );
     CREATE INDEX IF NOT EXISTS idx_events_skill ON events(skill);
@@ -62,6 +64,16 @@ function migrate(db: DatabaseSync): void {
       trusted    INTEGER NOT NULL DEFAULT 0
     );
   `)
+  // v0.1 dbs predate the machine column. Add it on open and backfill existing
+  // rows to this host — they were all recorded here before multi-machine sync.
+  const cols = all<{ name: string }>(db, 'PRAGMA table_info(events)')
+  if (!cols.some((c) => c.name === 'machine')) {
+    db.exec('ALTER TABLE events ADD COLUMN machine TEXT')
+  }
+  db.prepare('UPDATE events SET machine = ? WHERE machine IS NULL').run(hostname())
+  // Created only after the column is guaranteed present (v0.1 dbs lacked it).
+  db.exec('CREATE INDEX IF NOT EXISTS idx_events_dedup ON events(session_id, skill, machine)')
+
   db.prepare('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)').run(
     'schema_version',
     SCHEMA_VERSION

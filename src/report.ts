@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { all } from './db.js'
-import { loadInventory } from './inventory.js'
+import { loadInventory, type InventoryOptions } from './inventory.js'
 
 export interface Outcomes {
   worked: number
@@ -23,6 +23,10 @@ export interface SkillRow {
   prevInvocations: number
   // Windowed activation counts keyed by harness ("claude-code", "codex").
   harnesses: Record<string, number>
+  // Windowed activation counts keyed by trigger ("model", "user-slash", "hook").
+  byTrigger: Record<string, number>
+  // Windowed activation counts keyed by the machine that recorded them.
+  machines: Record<string, number>
 }
 
 export interface Report {
@@ -46,6 +50,7 @@ export interface Activation {
   sessionId: string | null
   project: string | null
   skillHash: string | null
+  machine: string | null
   tokensAfter: number
   errorsAfter: number
 }
@@ -63,6 +68,7 @@ interface EventRow {
   session_id: string | null
   project: string | null
   skill_hash: string | null
+  machine: string | null
   tokens_after: number | null
   errors_after: number | null
 }
@@ -83,7 +89,7 @@ function tsMs(ts: string | null): number {
 function eventsForSkill(db: DatabaseSync, name: string): EventRow[] {
   return all<EventRow>(
     db,
-    `SELECT e.ts, e.harness, e.trigger, e.origin, e.session_id, e.project, e.skill_hash,
+    `SELECT e.ts, e.harness, e.trigger, e.origin, e.session_id, e.project, e.skill_hash, e.machine,
             s.tokens_after, s.errors_after
        FROM events e
        LEFT JOIN signals s ON s.event_id = e.id
@@ -122,6 +128,8 @@ function computeRow(
   const prevCutoffMs = cutoffMs - days * DAY_MS
   const dailyCounts = new Array<number>(days).fill(0)
   const harnesses: Record<string, number> = {}
+  const byTrigger: Record<string, number> = {}
+  const machines: Record<string, number> = {}
   let prevInvocations = 0
   for (const e of events) {
     const ms = tsMs(e.ts)
@@ -130,6 +138,10 @@ function computeRow(
       dailyCounts[idx]++
       const h = e.harness ?? 'claude-code'
       harnesses[h] = (harnesses[h] ?? 0) + 1
+      const t = e.trigger ?? 'unknown'
+      byTrigger[t] = (byTrigger[t] ?? 0) + 1
+      const m = e.machine ?? 'unknown'
+      machines[m] = (machines[m] ?? 0) + 1
     } else if (ms >= prevCutoffMs) {
       prevInvocations++
     }
@@ -146,6 +158,8 @@ function computeRow(
     dailyCounts,
     prevInvocations,
     harnesses,
+    byTrigger,
+    machines,
   }
   return { row, events, windowed }
 }
@@ -159,11 +173,11 @@ function skillUniverse(db: DatabaseSync, inventory: Iterable<string>): Set<strin
 
 export function computeReport(
   db: DatabaseSync,
-  claudeDir: string | undefined,
+  inventoryOpts: InventoryOptions,
   days: number
 ): Report {
   const cutoffMs = Date.now() - days * DAY_MS
-  const inventory = loadInventory(claudeDir)
+  const inventory = loadInventory(inventoryOpts)
   const skills: SkillRow[] = []
   for (const name of skillUniverse(db, inventory.keys())) {
     skills.push(computeRow(db, name, inventory.has(name), cutoffMs, days).row)
@@ -174,12 +188,12 @@ export function computeReport(
 
 export function computeSkillDetail(
   db: DatabaseSync,
-  claudeDir: string | undefined,
+  inventoryOpts: InventoryOptions,
   name: string,
   days: number
 ): SkillDetail {
   const cutoffMs = Date.now() - days * DAY_MS
-  const inventory = loadInventory(claudeDir)
+  const inventory = loadInventory(inventoryOpts)
   const { row, events } = computeRow(db, name, inventory.has(name), cutoffMs, days)
 
   const versionMap = new Map<string | null, VersionRollup>()
@@ -200,6 +214,7 @@ export function computeSkillDetail(
     sessionId: e.session_id,
     project: e.project,
     skillHash: e.skill_hash,
+    machine: e.machine,
     tokensAfter: e.tokens_after ?? 0,
     errorsAfter: e.errors_after ?? 0,
   }))
