@@ -1,0 +1,39 @@
+{
+  "name": "skillstats",
+  "version": "0.1.0",
+  "description": "Local-first skill-usage analytics for Claude Code — record every skill activation, grade whether it helped, and close the loop with human-gated improvement proposals.",
+  "license": "MIT",
+  "author": "Alex Neyman",
+  "type": "module",
+  "bin": {
+    "skillstats": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test 'test/**/*.mjs'"
+  },
+  "keywords": [
+    "claude-code",
+    "skills",
+    "analytics",
+    "mcp",
+    "agent",
+    "observability"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.0"
+  }
+}
