@@ -83,9 +83,10 @@ function buildData(
   dbPath: string,
   claudeDir: string,
   codexDir: string,
-  days: number
+  days: number,
+  machine?: string
 ): DashboardData {
-  const report = computeReport(db, { claudeDir, codexDir }, days)
+  const report = computeReport(db, { claudeDir, codexDir }, days, machine)
   return {
     report,
     recentOutcomes: recentOutcomes(db),
@@ -97,6 +98,12 @@ function parseDays(url: URL): number {
   const raw = url.searchParams.get('days')
   const n = raw === null ? 30 : Number.parseInt(raw, 10)
   return Number.isFinite(n) && n > 0 ? n : 30
+}
+
+// Optional server-side machine filter for /api/report. Absent/empty = all systems.
+function parseMachine(url: URL): string | undefined {
+  const raw = url.searchParams.get('machine')
+  return raw !== null && raw.length > 0 ? raw : undefined
 }
 
 function sendJson(res: ServerResponse, code: number, body: unknown): void {
@@ -143,7 +150,7 @@ function handle(
   }
 
   if (req.method === 'GET' && path === '/api/report') {
-    sendJson(res, 200, buildData(db, dbPath, claudeDir, codexDir, parseDays(url)))
+    sendJson(res, 200, buildData(db, dbPath, claudeDir, codexDir, parseDays(url), parseMachine(url)))
     return
   }
 

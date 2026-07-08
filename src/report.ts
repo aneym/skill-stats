@@ -116,9 +116,12 @@ function computeRow(
   name: string,
   inInventory: boolean,
   cutoffMs: number,
-  days: number
+  days: number,
+  machine?: string
 ): { row: SkillRow; events: EventRow[]; windowed: EventRow[] } {
-  const events = eventsForSkill(db, name)
+  const allEvents = eventsForSkill(db, name)
+  const events =
+    machine === undefined ? allEvents : allEvents.filter((e) => (e.machine ?? 'unknown') === machine)
   const windowed = events.filter((e) => tsMs(e.ts) >= cutoffMs)
   const invocations = windowed.length
   const tokensAfter = windowed.reduce((a, e) => a + (e.tokens_after ?? 0), 0)
@@ -174,13 +177,14 @@ function skillUniverse(db: DatabaseSync, inventory: Iterable<string>): Set<strin
 export function computeReport(
   db: DatabaseSync,
   inventoryOpts: InventoryOptions,
-  days: number
+  days: number,
+  machine?: string
 ): Report {
   const cutoffMs = Date.now() - days * DAY_MS
   const inventory = loadInventory(inventoryOpts)
   const skills: SkillRow[] = []
   for (const name of skillUniverse(db, inventory.keys())) {
-    skills.push(computeRow(db, name, inventory.has(name), cutoffMs, days).row)
+    skills.push(computeRow(db, name, inventory.has(name), cutoffMs, days, machine).row)
   }
   skills.sort((a, b) => b.invocations - a.invocations || a.name.localeCompare(b.name))
   return { generatedAt: new Date().toISOString(), days, skills }
